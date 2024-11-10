@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -56,6 +57,7 @@ func main() {
 
 	// Routes
 	r.Post("/convert", s.handleConvert)
+	r.Get("/convert/{url}", s.handleConvertURL)
 	r.Get("/health", s.handleHealth)
 
 	// Start server
@@ -84,6 +86,29 @@ func (s *server) handleConvert(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *server) handleConvertURL(w http.ResponseWriter, r *http.Request) {
+	target, err := url.QueryUnescape(chi.URLParam(r, "url"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// validate url is not malformed
+	if _, err := url.ParseRequestURI(target); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	markdown, err := s.converter.Convert(r.Context(), target)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/markdown")
+	w.Write([]byte(markdown))
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {

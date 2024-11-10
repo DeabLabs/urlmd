@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"time"
 
-	htmlToMarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
+	htmlToMarkdownConverter "github.com/JohannesKaufmann/html-to-markdown/v2/converter"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/playwright-community/playwright-go"
 )
@@ -25,6 +27,8 @@ type Converter struct {
 	db     *sql.DB
 	pw     *playwright.Playwright
 	config Config
+	conv   *htmlToMarkdownConverter.Converter
+	lp     *linkPlugin
 }
 
 // NewConverter creates a new converter instance
@@ -60,10 +64,21 @@ func NewConverter(config Config) (*Converter, error) {
 		return nil, err
 	}
 
+	// Initialize converter library instance
+	lp := NewLinkPlugin("")
+	lpa := lp.(*linkPlugin)
+	converter := htmlToMarkdownConverter.NewConverter(htmlToMarkdownConverter.WithPlugins(
+		base.NewBasePlugin(),
+		commonmark.NewCommonmarkPlugin(),
+		lp,
+	))
+
 	return &Converter{
 		db:     db,
 		pw:     pw,
 		config: config,
+		conv:   converter,
+		lp:     lpa,
 	}, nil
 }
 
@@ -137,22 +152,22 @@ func (c *Converter) fetchAndConvert(ctx context.Context, url string) (string, er
 		return "", err
 	}
 
+	// Set baseURL for link plugin
+	// This is used to convert relative links to absolute links
+	c.lp.baseURL = url
+
 	// Convert HTML to markdown using your preferred library
 	// This is a placeholder - you'll need to implement the actual conversion
-	markdown, err := convertHTMLToMarkdown(content)
+	markdown, err := c.conv.ConvertString(content)
 	if err != nil {
+		// Reset baseURL for link plugin
+		c.lp.baseURL = ""
 		return "", err
 	}
 
-	return markdown, nil
-}
+	// Reset baseURL for link plugin
+	c.lp.baseURL = ""
 
-// Placeholder for HTML to Markdown conversion
-func convertHTMLToMarkdown(html string) (string, error) {
-	markdown, err := htmlToMarkdown.ConvertString(html)
-	if err != nil {
-		return "", err
-	}
 	return markdown, nil
 }
 
