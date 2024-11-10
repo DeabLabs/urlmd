@@ -3,6 +3,7 @@ package converter
 import (
 	"context"
 	"database/sql"
+	URL "net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -154,7 +155,12 @@ func (c *Converter) fetchAndConvert(ctx context.Context, url string) (string, er
 
 	// Set baseURL for link plugin
 	// This is used to convert relative links to absolute links
-	c.lp.baseURL = url
+	// the baseURL is everything up to the first slash
+	baseURL, err := URL.Parse(url)
+	if err != nil {
+		return "", err
+	}
+	c.lp.baseURL = baseURL.Scheme + "://" + baseURL.Host
 
 	// Convert HTML to markdown using your preferred library
 	// This is a placeholder - you'll need to implement the actual conversion

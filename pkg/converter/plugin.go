@@ -3,9 +3,12 @@ package converter
 import (
 	"bytes"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/JohannesKaufmann/dom"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
+	"github.com/JohannesKaufmann/html-to-markdown/v2/marker"
 	"golang.org/x/net/html"
 )
 
@@ -98,6 +101,128 @@ func isImageOrLinkStartBracket(chars []byte, index int) int {
 	return -1
 }
 
+func TrimConsecutiveNewlines(source []byte) []byte {
+	// Some performance optimizations:
+	// - If no replacement was done, we return the original slice and dont allocate.
+	// - We batch appends
+
+	var ret []byte
+
+	startNormal := 0
+	startMatch := -1
+
+	count := 0
+	// for i, b := range source {
+	for i := 0; i < len(source); i++ {
+		r, size := utf8.DecodeRune(source[i:])
+		_ = size
+
+		isNewline := r == '\n' || r == marker.MarkerLineBreak
+		if isNewline {
+			count += 1
+		}
+
+		if startMatch == -1 && isNewline {
+			// Start of newlines
+			startMatch = i
+			i = i + size - 1
+			continue
+		} else if startMatch != -1 && isNewline {
+			// Middle of newlines
+			i = i + size - 1
+			continue
+		} else if startMatch != -1 {
+			// Character after the last newline character
+
+			if count > 2 {
+				if ret == nil {
+					ret = make([]byte, 0, len(source))
+				}
+
+				ret = append(ret, source[startNormal:startMatch]...)
+				ret = append(ret, '\n', '\n')
+				startNormal = i
+			}
+
+			startMatch = -1
+			count = 0
+		}
+	}
+
+	getStartEnd := func() (int, int, bool, bool) {
+		if startMatch == -1 && startNormal == 0 {
+			// a) no changes need to be done
+			return -1, -1, false, false
+		}
+
+		if count <= 2 {
+			// b) Only the normal characters still need to be added
+			return startNormal, len(source), true, false
+		}
+
+		// c) The match still needs to be replaced (and possible the previous normal characters be added)
+		return startNormal, startMatch, true, true
+	}
+
+	start, end, isKeepNeeded, isReplaceNeeded := getStartEnd()
+	if isKeepNeeded {
+		if ret == nil {
+			ret = make([]byte, 0, len(source))
+		}
+
+		ret = append(ret, source[start:end]...)
+		if isReplaceNeeded {
+			ret = append(ret, '\n', '\n')
+		}
+	}
+
+	if ret == nil {
+		// Huray, we did not do any allocations with make()
+		// and instead just return the original slice.
+		return source
+	}
+	return ret
+}
+
+var newline = []byte{'\n'}
+var escape = []byte{'\\'}
+
+func EscapeMultiLine(content []byte) []byte {
+	content = bytes.TrimSpace(content)
+	content = TrimConsecutiveNewlines(content)
+	if len(content) == 0 {
+		return content
+	}
+
+	parts := marker.SplitFunc(content, func(r rune) bool {
+		return r == '\n' || r == marker.MarkerLineBreak
+	})
+
+	for i := range parts {
+		parts[i] = bytes.TrimSpace(parts[i])
+		if len(parts[i]) == 0 {
+			parts[i] = escape
+		}
+	}
+	content = bytes.Join(parts, newline)
+
+	return content
+}
+
+func SurroundingSpaces(content []byte) ([]byte, []byte, []byte) {
+	rightTrimmed := bytes.TrimRightFunc(content, func(r rune) bool {
+		return unicode.IsSpace(r) || r == marker.MarkerLineBreak
+	})
+	rightExtra := content[len(rightTrimmed):]
+
+	trimmed := bytes.TrimLeftFunc(rightTrimmed, func(r rune) bool {
+		return unicode.IsSpace(r) || r == marker.MarkerLineBreak
+	})
+	leftExtra := content[0 : len(rightTrimmed)-len(trimmed)]
+
+	return leftExtra, trimmed, rightExtra
+}
+
 type linkPlugin struct {
 	baseURL string
 }
@@ -126,6 +251,8 @@ func (l *linkPlugin) handleRender(ctx converter.Context, w converter.Writer, n *
 	switch name {
 	case "img":
 		return l.renderImage(ctx, w, n)
+	case "a":
+		return l.renderAnchor(ctx, w, n)
 	}
 	return converter.RenderTryNext
 
@@ -169,4 +296,85 @@ func (c *linkPlugin) renderImage(ctx converter.Context, w converter.Writer, n *h
 	w.WriteRune(')')
 
 	return converter.RenderSuccess
+}
+
+type link struct {
+	*html.Node
+
+	before  []byte
+	content []byte
+	after   []byte
+
+	href  string
+	title string
+}
+
+func (c *linkPlugin) renderLinkInlined(w converter.Writer, l *link) converter.RenderStatus {
+
+	w.Write(l.before)
+	w.WriteRune('[')
+	w.Write(l.content)
+	w.WriteRune(']')
+	w.WriteRune('(')
+	w.WriteString(l.href)
+	if l.title != "" {
+		// The destination and title must be seperated by a space
+		w.WriteRune(' ')
+		w.Write(SurroundByQuotes([]byte(l.title)))
+	}
+	w.WriteRune(')')
+	w.Write(l.after)
+
+	return converter.RenderSuccess
+}
+
+func (l *linkPlugin) renderAnchor(ctx converter.Context, w converter.Writer, n *html.Node) converter.RenderStatus {
+	ctx = ctx.WithValue("is_inside_link", true)
+
+	href := dom.GetAttributeOr(n, "href", "")
+
+	href = strings.TrimSpace(href)
+	href = ctx.AssembleAbsoluteURL(ctx, "a", href)
+
+	title := dom.GetAttributeOr(n, "title", "")
+	title = strings.ReplaceAll(title, "\n", " ")
+
+	li := &link{
+		Node:  n,
+		href:  href,
+		title: title,
+	}
+
+	var buf bytes.Buffer
+	ctx.RenderChildNodes(ctx, &buf, n)
+	content := buf.Bytes()
+
+	if bytes.TrimFunc(content, marker.IsSpace) == nil {
+		// Fallback to the title
+		content = []byte(li.title)
+	}
+	if bytes.TrimSpace(content) == nil {
+		return converter.RenderSuccess
+	}
+
+	if li.href == "" {
+		// A link without href is valid, like e.g. [text]()
+		// But a title would make it invalid.
+		li.title = ""
+	}
+
+	// join the baseURL with the href if the href is relative
+	if strings.HasPrefix(li.href, "/") {
+		li.href = strings.TrimSuffix(l.baseURL, "/") + li.href
+	}
+
+	leftExtra, trimmed, rightExtra := SurroundingSpaces(content)
+
+	trimmed = EscapeMultiLine(trimmed)
+
+	li.before = leftExtra
+	li.content = trimmed
+	li.after = rightExtra
+
+	return l.renderLinkInlined(w, li)
 }
