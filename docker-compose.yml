@@ -1,7 +1,32 @@
+version: "3.8"
+
 services:
   urlmd:
     build:
       context: .
       dockerfile: Dockerfile
+      # Platform will default to your host architecture
+      # You can override it explicitly if needed:
+      # platform: linux/arm64  # for M1/M2 Macs
+      # platform: linux/amd64  # for Intel/AMD
     ports:
-      - 8080:8080
+      - "8080:8080"
+    environment:
+      - TZ=UTC
+    # Add any other environment variables your app needs
+    volumes:
+      - ./cache:/app/cache # If you need persistent cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+# volumes:
+#   go-cache:
