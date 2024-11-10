@@ -3,6 +3,8 @@ package converter
 import (
 	"context"
 	"database/sql"
+	"os"
+	"path/filepath"
 	"time"
 
 	htmlToMarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
@@ -27,6 +29,13 @@ type Converter struct {
 
 // NewConverter creates a new converter instance
 func NewConverter(config Config) (*Converter, error) {
+	// Initialize cache directory if it doesn't exist
+	// The directory is everything up to the filename
+	dir := filepath.Dir(config.CachePath)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		os.MkdirAll(dir, 0755)
+	}
+
 	// Initialize SQLite
 	db, err := sql.Open("sqlite3", config.CachePath)
 	if err != nil {

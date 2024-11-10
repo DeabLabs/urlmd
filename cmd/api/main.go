@@ -36,7 +36,7 @@ func main() {
 	// Initialize converter
 	conv, err := converter.NewConverter(converter.Config{
 		CacheDuration: 24 * time.Hour,
-		CachePath:     "cache.db",
+		CachePath:     ".cache/cache.db",
 		Timeout:       30 * time.Second,
 		UserAgent:     "Webpage-To-Markdown-Bot/1.0",
 	})

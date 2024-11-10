@@ -33,3 +33,4 @@ go.work
 # OS specific files
 .DS_Store
 .env
+.cache/cache.db
