@@ -29,7 +29,6 @@ type Converter struct {
 	pw     *playwright.Playwright
 	config Config
 	conv   *htmlToMarkdownConverter.Converter
-	lp     *linkPlugin
 }
 
 // NewConverter creates a new converter instance
@@ -66,12 +65,9 @@ func NewConverter(config Config) (*Converter, error) {
 	}
 
 	// Initialize converter library instance
-	lp := NewLinkPlugin("")
-	lpa := lp.(*linkPlugin)
 	converter := htmlToMarkdownConverter.NewConverter(htmlToMarkdownConverter.WithPlugins(
 		base.NewBasePlugin(),
 		commonmark.NewCommonmarkPlugin(),
-		lp,
 	))
 
 	return &Converter{
@@ -79,7 +75,6 @@ func NewConverter(config Config) (*Converter, error) {
 		pw:     pw,
 		config: config,
 		conv:   converter,
-		lp:     lpa,
 	}, nil
 }
 
@@ -160,19 +155,14 @@ func (c *Converter) fetchAndConvert(ctx context.Context, url string) (string, er
 	if err != nil {
 		return "", err
 	}
-	c.lp.baseURL = baseURL.Scheme + "://" + baseURL.Host
+	domain := baseURL.Scheme + "://" + baseURL.Host
 
 	// Convert HTML to markdown using your preferred library
 	// This is a placeholder - you'll need to implement the actual conversion
-	markdown, err := c.conv.ConvertString(content)
+	markdown, err := c.conv.ConvertString(content, htmlToMarkdownConverter.WithDomain(domain))
 	if err != nil {
-		// Reset baseURL for link plugin
-		c.lp.baseURL = ""
 		return "", err
 	}
-
-	// Reset baseURL for link plugin
-	c.lp.baseURL = ""
 
 	return markdown, nil
 }
